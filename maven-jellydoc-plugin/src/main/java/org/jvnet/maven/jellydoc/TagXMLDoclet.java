@@ -15,22 +15,23 @@
  */
 package org.jvnet.maven.jellydoc;
 
-import com.sun.javadoc.AnnotationDesc;
-import com.sun.javadoc.AnnotationDesc.ElementValuePair;
-import com.sun.javadoc.ClassDoc;
-import com.sun.javadoc.Doc;
-import com.sun.javadoc.DocErrorReporter;
-import com.sun.javadoc.Doclet;
-import com.sun.javadoc.MethodDoc;
-import com.sun.javadoc.PackageDoc;
-import com.sun.javadoc.Parameter;
-import com.sun.javadoc.ProgramElementDoc;
-import com.sun.javadoc.RootDoc;
-import com.sun.javadoc.SeeTag;
-import com.sun.javadoc.Tag;
+import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.AnnotationValue;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.Element;
+import jdk.javadoc.doclet.Reporter;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.PackageElement;
+import javax.lang.model.element.VariableElement;
+import javax.tools.Diagnostic;
+
+import com.sun.source.doctree.SeeTree;
+import com.sun.source.doctree.DocTree;
 import com.sun.xml.txw2.TXW;
 import com.sun.xml.txw2.TypedXmlWriter;
 import com.sun.xml.txw2.output.StreamSerializer;
+import jdk.javadoc.doclet.DocletEnvironment;
+import jdk.javadoc.doclet.StandardDoclet;
 import org.cyberneko.html.parsers.SAXParser;
 import org.jvnet.maven.jellydoc.annotation.NoContent;
 import org.jvnet.maven.jellydoc.annotation.Required;
@@ -61,12 +62,12 @@ import java.util.Stack;
 
 // #### somehow we need to handle taglib inheritence...
 
-public class TagXMLDoclet extends Doclet {
+public class TagXMLDoclet extends StandardDoclet {
 
     private String targetFileName = null;
     private String encodingFormat;
 
-    public TagXMLDoclet (RootDoc root) throws Exception
+    public TagXMLDoclet (DocletEnvironment root) throws Exception
     {
         readOptions(root);
         File targetFile = new File(targetFileName);
@@ -81,29 +82,29 @@ public class TagXMLDoclet extends Doclet {
     /**
      * Generates the xml for the tag libraries
      */
-    private void javadocXML(RootDoc root, Tags tw) throws SAXException {
-        Set<PackageDoc> pkgs = new HashSet<>();
-        for (ClassDoc c : root.specifiedClasses())
+    private void javadocXML(DocletEnvironment root, Tags tw) throws SAXException {
+        Set<PackageElement> pkgs = new HashSet<>();
+        for (TypeElement c : root.specifiedClasses())
             pkgs.add(c.containingPackage());
         pkgs.addAll(Arrays.asList(root.specifiedPackages()));
 
         // Generate for packages.
-        for (PackageDoc pkg : pkgs)
+        for (PackageElement pkg : pkgs)
             packageXML(pkg,tw);
     }
 
     /**
      * Generates doc for a tag library
      */
-    private void packageXML(PackageDoc packageDoc, Tags tw) throws SAXException {
+    private void packageXML(PackageElement packageDoc, Tags tw) throws SAXException {
 
         System.out.println( "processing package: " + packageDoc.name());
 
-        ClassDoc[] classArray = packageDoc.ordinaryClasses();
+        TypeElement[] classArray = packageDoc.ordinaryClasses();
 
         // lets see if we find a Tag
         boolean foundTag = false;
-        for (ClassDoc classDoc : classArray) {
+        for (TypeElement classDoc : classArray) {
             if (isTag(classDoc)) {
                 foundTag = true;
                 break;
@@ -132,24 +133,24 @@ public class TagXMLDoclet extends Doclet {
         docXML(packageDoc,library);
 
         // generate tags
-        for (ClassDoc c : classArray) {
+        for (TypeElement c : classArray) {
             if (isTag(c)) {
                 tagXML(c,library.tag());
             }
         }
     }
 
-    private String findUri(AnnotationDesc[] an) {
-        for (AnnotationDesc a : an)
-            if(a.annotationType().qualifiedName().equals(TagLibUri.class.getName()))
-                for (ElementValuePair e : a.elementValues())
+    private String findUri(AnnotationMirror[] an) {
+        for (AnnotationMirror a : an)
+            if(a.getAnnotationType().toString().equals(TagLibUri.class.getName()))
+                for (AnnotationValue e : a.elementValues())
                     if(e.element().name().equals("value"))
                         return e.value().value().toString();
         return null;
     }
 
-    private boolean has(ProgramElementDoc doc, Class<? extends Annotation> type) {
-        for (AnnotationDesc a : doc.annotations())
+    private boolean has(Element doc, Class<? extends Annotation> type) {
+        for (AnnotationMirror a : doc.annotations())
             if(a.annotationType().qualifiedName().equals(type.getName()))
                 return true;
         return false;
@@ -158,22 +159,22 @@ public class TagXMLDoclet extends Doclet {
     /**
      * @return true if this class is a Jelly Tag
      */
-    private boolean isTag(ClassDoc classDoc) {
-        ClassDoc[] interfaceArray = classDoc.interfaces();
-        for (ClassDoc i : interfaceArray) {
-            String name = i.qualifiedName();
+    private boolean isTag(TypeElement classDoc) {
+        TypeElement[] interfaceArray = classDoc.getInterfaces().toArray(new TypeElement[0]);
+        for (TypeElement i : interfaceArray) {
+            String name = i.getQualifiedName().toString();
             if ("org.apache.commons.jelly.Tag".equals(name)) {
                 return true;
             }
         }
-        ClassDoc base = classDoc.superclass();
+        TypeElement base = classDoc.getSuperclass().
         return base != null && isTag(base);
     }
 
     /**
      * Generates doc for a tag
      */
-    private void tagXML(ClassDoc classDoc, org.jvnet.maven.jellydoc.Tag tag) throws SAXException {
+    private void tagXML(TypeElement classDoc, org.jvnet.maven.jellydoc.Tag tag) throws SAXException {
         if (classDoc.isAbstract()) {
             return;
         }
@@ -202,12 +203,12 @@ public class TagXMLDoclet extends Doclet {
     /**
      * Generates doc for a tag property
      */
-    private void propertiesXML(ClassDoc classDoc, org.jvnet.maven.jellydoc.Tag tag) throws SAXException {
-        MethodDoc[] methodArray = classDoc.methods();
-        for (MethodDoc m : methodArray) {
+    private void propertiesXML(TypeElement classDoc, org.jvnet.maven.jellydoc.Tag tag) throws SAXException {
+        ExecutableElement[] methodArray = classDoc.methods();
+        for (ExecutableElement m : methodArray) {
             propertyXML(m,tag);
         }
-        ClassDoc base = classDoc.superclass();
+        TypeElement base = classDoc.superclass();
         if ( base != null ) {
             propertiesXML( base, tag);
         }
@@ -217,19 +218,19 @@ public class TagXMLDoclet extends Doclet {
     /**
      * Generates doc for a tag property
      */
-    private void propertyXML(MethodDoc methodDoc, org.jvnet.maven.jellydoc.Tag tag) throws SAXException {
-        if ( ! methodDoc.isPublic() || methodDoc.isStatic() ) {
+    private void propertyXML(ExecutableElement methodDoc, org.jvnet.maven.jellydoc.Tag tag) throws SAXException {
+        if ( ! methodDoc.getKind().is .isPublic() || methodDoc.isStatic() ) {
             return;
         }
         String name = methodDoc.name();
         if ( ! name.startsWith( "set" ) ) {
             return;
         }
-        Parameter[] parameterArray = methodDoc.parameters();
+        VariableElement[] parameterArray = methodDoc.getParameters();
         if ( parameterArray == null || parameterArray.length != 1 ) {
             return;
         }
-        Parameter parameter = parameterArray[0];
+        VariableElement parameter = parameterArray[0];
 
         name = name.substring(3);
         name = Introspector.decapitalize(name);
@@ -253,22 +254,22 @@ public class TagXMLDoclet extends Doclet {
     /**
      * Generates doc for element "doc"
      */
-    private void docXML(Doc doc, Item w) throws SAXException {
+    private void docXML(Element doc, Item w) throws SAXException {
         TypedXmlWriter d = w.doc();
         // handle the "comment" part, including {@link} tags
         {
-            for (Tag tag : doc.inlineTags()) {
+            for (DocTree tag : doc.inlineTags()) {
                 // if tags[i] is an @link tag
-                if (tag instanceof SeeTag) {
-                    String label = ((SeeTag) tag).label();
+                if (tag instanceof SeeTree) {
+                    String label = ((SeeTree) tag).label();
                     // if the label is null or empty, use the class#member part of the link
                     if (null == label || "".equals(label)) {
                         StringBuilder buf = new StringBuilder();
-                        String className = ((SeeTag) tag).referencedClassName();
+                        String className = ((SeeTree) tag).referencedClassName();
                         if ("".equals(className)) {
                             className = null;
                         }
-                        String memberName = ((SeeTag) tag).referencedMemberName();
+                        String memberName = ((SeeTree) tag).referencedMemberName();
                         if ("".equals(memberName)) {
                             memberName = null;
                         }
@@ -290,7 +291,7 @@ public class TagXMLDoclet extends Doclet {
             }
         }
         // handle the "tags" part
-        for (Tag tag : doc.tags())
+        for (DocTree tag : doc.tags())
             javadocTagXML(tag,w);
     }
 
@@ -344,13 +345,13 @@ public class TagXMLDoclet extends Doclet {
     /**
      * Generates doc for all tag elements.
      */
-    private void javadocTagXML(Tag tag, Item w) throws SAXException {
-        String name = tag.name().substring(1) + "tag";
+    private void javadocTagXML(DocTree tag, Item w) throws SAXException {
+        String name = tag.getKind().tagName.substring(1) + "tag";
         if (! tag.text().equals(""))
             w._element(name,TypedXmlWriter.class)._pcdata(tag.text());
     }
 
-    public static boolean start(RootDoc root) {
+    public static boolean start(DocletEnvironment root) {
         try {
             new TagXMLDoclet(root);
             return true;
@@ -361,7 +362,7 @@ public class TagXMLDoclet extends Doclet {
         }
     }
 
-    private void readOptions(RootDoc root)
+    private void readOptions(DocletEnvironment root)
     {
         for (String[] opt : root.options()) {
             if (opt[0].equals("-d")) {
@@ -387,14 +388,14 @@ public class TagXMLDoclet extends Doclet {
     }
 
     public static boolean validOptions(String[][] options,
-        DocErrorReporter reporter)
+        Reporter reporter)
     {
         boolean foundEncodingOption = false;
         boolean foundDirOption = false;
         for (String[] opt : options) {
             if (opt[0].equals("-d")) {
                 if (foundDirOption) {
-                    reporter.printError("Only one -d option allowed.");
+                    reporter.print(Diagnostic.Kind.ERROR, "Only one -d option allowed.");
                     return false;
                 } else {
                     foundDirOption = true;
@@ -402,7 +403,7 @@ public class TagXMLDoclet extends Doclet {
             }
             if (opt[0].equals("-encoding")) {
                 if (foundEncodingOption) {
-                    reporter.printError("Only one -encoding option allowed.");
+                    reporter.print(Diagnostic.Kind.ERROR, "Only one -encoding option allowed.");
                     return false;
                 } else {
                     foundEncodingOption = true;
@@ -411,7 +412,7 @@ public class TagXMLDoclet extends Doclet {
         }
         if (!foundDirOption)
         {
-            reporter.printError("Usage: javadoc -d <directory> -doclet TagXMLDoclet ...");
+            reporter.print(Diagnostic.Kind.NOTE, "Usage: javadoc -d <directory> -doclet TagXMLDoclet ...");
             return false;
         }
         return true;
